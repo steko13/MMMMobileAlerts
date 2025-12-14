@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const fs = require('fs');
-const request = require('request');
+const request = require('request-micro');
 const easyConf = require('./easyConf');
 const eConf = new easyConf();
 
@@ -25,7 +25,7 @@ eConf.defaults({
 
     'mqtt': 'mqtt://127.0.0.1',
     'mqtt_home': 'MobileAlerts/', // default MQTT path for the device parsed data
-    'keepalive': 430,
+    'keepalive': 600,
     'reconnectPeriod': 0,
 
     'publish_type': 'default', // Implementation to support multiple types of publishing via MQTT (implemented to support e.g. Sonoff Adapter)
@@ -57,7 +57,6 @@ if (eConf.get('localIPv4Address') == null) {
     localIPv4Adress = eConf.get('localIPv4Address');
 }
 
-console.log('### Local IP address for proxy: ' + localIPv4Adress);
 const proxyServerPort = eConf.get('proxyServerPort');
 
 // #############################################################
@@ -72,6 +71,18 @@ function round(value, decimals) {
 const mqtt = require('mqtt');
 const mqttBroker = eConf.get('mqtt')
 var mqttClient;
+
+// Helper to debounce reconnect attempts to avoid exponential loop bomb
+var reconnectTimer = null;
+function triggerReconnect() {
+    if (reconnectTimer) return; // Reconnect already pending
+    console.log('### MQTT server: reconnecting...');
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if(mqttClient) mqttClient.reconnect();
+    }, 1000);
+}
+
 if (mqttBroker) {
     mqttClient = mqtt.connect(eConf.get('mqtt'), {
         'username': eConf.get('mqtt_username'),
@@ -85,12 +96,15 @@ if (mqttBroker) {
     });
     mqttClient.on('close', function () {
         console.log('### MQTT server is closed');
+        triggerReconnect();
     });
     mqttClient.on('offline', function () {
         console.log('### MQTT server is offline');
+        triggerReconnect();
     });
     mqttClient.on('error', function (error) {
         console.log('### MQTT server has an error', error);
+        triggerReconnect();
     });
 }
 
@@ -158,7 +172,7 @@ function sendMQTT(sensor) {
     } else if (eConf.get('publish_type') == 'sonoff') {
         publishSonoffSensorState(json);
     }
-    /*    if(sensor.sensorType == 0x08) {
+    /* if(sensor.sensorType == 0x08) {
         var rain = 0;
         if(lastSensorMessages[sensor.ID]) {
           const eventCounterDelta = sensor.eventCounter
@@ -214,13 +228,17 @@ if (locale != null) {
 
 var lastSensorMessages = {};
 try {
-    sensorList = JSON.parse(fs.readFileSync('lastSensorMessages.json', 'utf8'));
-    for (sensorID in sensorList) {
-        buf = sensorList[sensorID].buffer;
-        if (buf) {
-            lastSensorMessages[sensorID] = sensors.CreateSensorObject(Buffer.from(buf.data));
-            lastSensorMessages[sensorID].isOffline = sensorList[sensorID].isOffline
+    if (fs.existsSync('lastSensorMessages.json')) {
+        sensorList = JSON.parse(fs.readFileSync('lastSensorMessages.json', 'utf8'));
+        for (sensorID in sensorList) {
+            buf = sensorList[sensorID].buffer;
+            if (buf) {
+                lastSensorMessages[sensorID] = sensors.CreateSensorObject(Buffer.from(buf.data));
+                lastSensorMessages[sensorID].isOffline = sensorList[sensorID].isOffline
+            }
         }
+    } else {
+        lastSensorMessages = {};
     }
 }
 catch (err) {
@@ -282,6 +300,7 @@ function processSensorData(buffer) {
 const publicIPv4Adress = eConf.get('publicIPv4adress')
 //In case NAT is used configuration can contain public IP -> Could contain docker system public IP
 const proxyListenIp = publicIPv4Adress ? publicIPv4Adress : localIPv4Adress;
+console.log('### Proxy IP address:Port: ' + proxyListenIp + ':' + proxyServerPort);
 
 var gatewayConfigClass = require('./gatewayConfig');
 var gatewayConfig = new gatewayConfigClass();
@@ -302,7 +321,7 @@ gatewayConfig.configureGateways(
 );
 
 function printGateways(gatewayConfigArrUDP) {
-    console.log('found following gateways:')
+    console.log('found following (static) gateways:')
     for (const [gatewayID, gatewayConfigDict] of Object.entries(gatewayConfigArrUDP)) {
         console.log(gatewayID.toString() + ':');
         for (const [gatewayConfigKey, gatewayConfigValue] of Object.entries(gatewayConfigDict)) {
