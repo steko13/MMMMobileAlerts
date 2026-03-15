@@ -183,10 +183,27 @@ module.exports = class UDPGatewayConfig {
                             // copy the Mobile Alerts Gateway ID
                             message.copy(rebootGatewayCommand, 0x02, 0x02, 0x08);
                             rebootGatewayCommand.writeInt16BE(REBOOT_SIZE, 0x08);
+                            
+                            if (udpSocket.remoteAddress()) {
+                                console.log("socket connected");
+                            }
+                            else
+                            {
+                                console.log("socket disconnected");
+                            }
 
                             udpSocket.send(rebootGatewayCommand, PORT, GATEWAY_ADDR, function () {
                                 console.log('handled gateway ' + GATEWAY_ADDR);
-                                udpSocket.disconnect();
+                                try {                               
+                                  // Nur trennen, wenn tatsächlich eine Verbindung besteht
+                                  if (udpSocket.remoteAddress()) { 
+                                    udpSocket.disconnect();
+                                  }
+                                } catch (err) {
+                                  if (err.code != 'ERR_SOCKET_DGRAM_NOT_CONNECTED') {
+                                    throw err; // Andere Fehler weitergeben
+                                  }
+                                }
                             });
                         });
                     } else {

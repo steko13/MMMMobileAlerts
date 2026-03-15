@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 const fs = require('fs');
-const request = require('request-micro');
+const path = require('path');
+const request = require('dropin-request');
 const easyConf = require('./easyConf');
 const eConf = new easyConf();
 
@@ -227,9 +228,10 @@ if (locale != null) {
 }
 
 var lastSensorMessages = {};
+const configPath = path.join(process.env.APPDATA, 'maserver', 'lastSensorMessages.json');
 try {
-    if (fs.existsSync('lastSensorMessages.json')) {
-        sensorList = JSON.parse(fs.readFileSync('lastSensorMessages.json', 'utf8'));
+    if (fs.existsSync(configPath)) {
+        sensorList = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         for (sensorID in sensorList) {
             buf = sensorList[sensorID].buffer;
             if (buf) {
@@ -253,9 +255,19 @@ function processSensorData(buffer) {
     if (sensor) {
         // Is the transmit ID unchanged (= is it the same package as the last one?)
         if (lastSensorMessages[sensor.ID]) {
-            const lastTx = lastSensorMessages[sensor.ID].tx;
-            if (lastTx == sensor.tx) // then we ignore it!
-                return;
+            const lastMsg = lastSensorMessages[sensor.ID];
+            const lastTx = lastMsg.tx;
+            const timeDiff = Date.now() - lastMsg.unixTime_ms;
+            if (lastTx == sensor.tx) {
+                if(sensor.sensorType != 0x10) {     // then we ignore it!
+                    return;
+                }
+                else {
+                    if(timeDiff < 30000) {
+                        return;
+                    }
+                }
+            }               
         }
 
         sensor.isOffline = false;
@@ -288,8 +300,14 @@ function processSensorData(buffer) {
         var currentTimestamp = Date.now() / 1000;
         if (lastWriteTimestamp + 10 <= currentTimestamp) {
             lastWriteTimestamp = currentTimestamp;
-            fs.writeFile('lastSensorMessages.json',
-                JSON.stringify(lastSensorMessages, null, 4), function (error) { });
+            // Ordner für die App definieren
+            const appDir = path.join(process.env.APPDATA, 'maserver');
+            // Sicherstellen, dass der Ordner existiert
+            if (!fs.existsSync(appDir)) {
+                fs.mkdirSync(appDir, { recursive: true });
+            }
+            const configPath = path.join(appDir, 'lastSensorMessages.json');
+            fs.writeFile(configPath, JSON.stringify(lastSensorMessages, null, 4), 'utf8', function (error) { });
         }
     }
 }
@@ -339,3 +357,173 @@ function startProxy(confDict) {
         , confDict['log'], confDict['cloudForward']
         , function (buffer) { processSensorData(buffer); });
 }
+
+// KONFIGURATION
+const GATEWAY_IP = '192.168.179.2'; // IP deines Gateways
+const GATEWAY_MAC = '001d8c0e8945'; // MAC ohne Doppelpunkte eintragen
+
+const dgram = require('dgram');
+
+function resetGatewayConfigBE(gatewayIp, gatewayId) {
+    const client = dgram.createSocket('udp4');
+    const buf = Buffer.alloc(181, 0); // Initialisiere mit Nullen
+
+    // Offset 0: Command (4) als Word (Big-Endian)
+    buf.writeUInt16BE(4, 0);
+
+    // Offset 2: Gateway ID (6 Bytes) - MAC bleibt als Byte-Folge gleich
+    const idBytes = Buffer.from(gatewayId.replace(/[: -]/g, ''), 'hex');
+    idBytes.copy(buf, 2);
+
+    // Offset 8: Gesamtlänge (181) als Word (Big-Endian)
+    buf.writeUInt16BE(181, 8);
+
+    // Offset 10: Use DHCP (1 = Ja)
+    buf.writeUInt8(1, 10);
+
+    // Offset 23: Device Name (String muss mit 0-Byte enden)
+    buf.write("MOBILEALERTS-Gateway", 23, 'ascii');
+
+    // Offset 44: Data Server Name (Zwingend für Cloud-Betrieb)
+    buf.write("www.data199.com", 44, 'ascii');
+
+    // Offset 109: USE PROXY -> 0 (No)
+    buf.writeUInt8(0, 109);
+
+    // Proxy Server Name (Offset 110) und Proxy Port (Offset 175) 
+    // sind durch das initial Buffer.alloc(181, 0) bereits genullt.
+    // Falls du den Port explizit nullen willst:
+    buf.writeUInt16BE(0, 175);
+
+    console.log(`Sende Big-Endian Reset-Paket an ${gatewayIp}...`);
+
+    client.send(buf, 0, buf.length, 8003, gatewayIp, (err) => {
+        if (err) {
+            console.error("UDP Sende-Fehler:", err);
+        } else {
+            console.log("Konfiguration gesendet. Prüfe das Gateway Web-Interface.");
+        }
+        setTimeout(() => client.close(), 500);
+    });
+}
+
+function resetGatewayConfig(gatewayIp, gatewayId) {
+    const client = dgram.createSocket('udp4');
+    
+    // 1. Buffer mit Nullen initialisieren (Ganz wichtig für die Validierung am Gateway!)
+    const buf = Buffer.alloc(181, 0); 
+
+    // Offset 0: Command (4)
+    buf.writeUInt16LE(4, 0);
+
+    // Offset 2: Gateway ID (6 Bytes) - Sicherstellen, dass es 6 Bytes sind
+    const idBytes = Buffer.from(gatewayId.replace(/[: -]/g, ''), 'hex');
+    console.log("gatewayId: " + gatewayId)
+    console.log("gw id: " + idBytes.toString())
+    console.log("length: " + idBytes.length)
+    if (idBytes.length !== 6) {
+        console.error("Fehler: Gateway-ID muss 6 Bytes lang sein!");
+        return;
+    }
+    idBytes.copy(buf, 0x02, 0x02, 0x08);
+
+    // Offset 8: Gesamtlänge (181)
+    buf.writeUInt16LE(181, 8);
+
+    // Offset 10: Use DHCP (1 = Ja)
+    buf.writeUInt8(1, 10);
+
+    // Offset 23: Device Name (Standard-String laut Sarnau)
+    buf.write("MOBILEALERTS-Gateway", 23, 'ascii');
+
+    // Offset 44: Data Server Name (Zwingend erforderlich für Cloud-Betrieb)
+    buf.write("www.data199.com", 44, 'ascii');
+
+    // Offset 109: USE PROXY (0 = AUS)
+    buf.writeUInt8(0, 109);
+
+    // Offsets 110-174 (Proxy Name) und 175 (Port) bleiben durch Buffer.alloc(0) genullt.
+
+    console.log(`Sende Reset-Paket an ${gatewayIp} (ID: ${gatewayId})...`);
+
+    client.send(buf, 0, buf.length, 8003, gatewayIp, (err) => {
+        if (err) {
+            console.error("Sende-Fehler:", err);
+        } else {
+            console.log("Paket gesendet. Prüfe jetzt die Gateway-Webseite (Settings).");
+        }
+        // Gib dem Netzwerk 500ms Zeit, bevor der Socket schließt
+        setTimeout(() => client.close(), 500);
+    });
+}
+
+function resetGatewayConfig2(gatewayIp, gatewayId) {
+    const client = dgram.createSocket('udp4');
+    const buf = Buffer.alloc(181); // Gesamtlänge laut Doku
+
+    // Offset 0: Command (4) als Word (Little Endian)
+    buf.writeUInt16LE(4, 0);
+
+    // Offset 2: Gateway ID (6 Bytes)
+    const idBytes = Buffer.from(gatewayId, 'hex');
+    idBytes.copy(buf, 2);
+
+    // Offset 8: Gesamtlänge (181)
+    buf.writeUInt16LE(181, 8);
+
+    // Offset 10: Use DHCP (Standard: 1 = Ja)
+    buf.writeUInt8(1, 10);
+
+    // Offset 23: Device Name (20 Bytes + 0-Byte)
+    buf.write("MOBILEALERTS-Gateway", 23, 'ascii');
+
+    // Offset 44: Data Server Name (Standard Cloud)
+    buf.write("www.data199.com", 44, 'ascii');
+
+    // Offset 109: USE PROXY -> 0 (Deaktivieren!)
+    buf.writeUInt8(0, 109);
+
+    // Offset 110: Proxy Server Name leeren (64 Bytes + 0-Byte)
+    buf.write("", 110, 'ascii');
+
+    // Offset 175: Proxy Port auf 0 setzen
+    buf.writeUInt16LE(0, 175);
+
+    // Paket absenden an Port 8003
+    client.send(buf, 8003, gatewayIp, (err) => {
+        if (err) console.error("Reset Fehler:", err);
+        else console.log("Gateway-Konfiguration zurückgesetzt (Proxy AUS).");
+        client.close();
+    });
+}
+
+// Exit-Hook Integration
+process.on('SIGINT', () => {
+    // Hier deine echten Werte eintragen:
+    resetGatewayConfigBE(GATEWAY_IP, GATEWAY_MAC);
+    setTimeout(() => process.exit(), 500); // Kurz warten für UDP-Versand
+});
+
+process.on('SIGTERM', () => {
+    // Hier deine echten Werte eintragen:
+    resetGatewayConfigBE(GATEWAY_IP, GATEWAY_MAC);
+    setTimeout(() => process.exit(), 500); // Kurz warten für UDP-Versand
+});
+
+process.on('SIGBREAK', () => {
+    // Hier deine echten Werte eintragen:
+    resetGatewayConfigBE(GATEWAY_IP, GATEWAY_MAC);
+    setTimeout(() => process.exit(), 500); // Kurz warten für UDP-Versand
+});
+
+process.on('SIGHUP', () => {
+    // Hier deine echten Werte eintragen:
+    resetGatewayConfigBE(GATEWAY_IP, GATEWAY_MAC);
+    setTimeout(() => process.exit(), 500); // Kurz warten für UDP-Versand
+});
+
+
+// Verhindert, dass Node sofort schließt, bevor UDP gesendet wurde
+process.on('exit', (code) => {
+    console.log(`Server beendet mit Code: ${code}`);
+});
