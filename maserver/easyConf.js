@@ -41,9 +41,11 @@ module.exports = class easyConf {
                 return this;
         }
         get(configKey) {
-                if(this.configJson[configKey]) {
+                if(this.configJson.hasOwnProperty(configKey)) {
                         return this.configJson[configKey];
-                } else if(this.defaultConfigJson[configKey]) {
+                } 
+                // Nur wenn er dort fehlt, nimm den Default
+                else if(this.defaultConfigJson.hasOwnProperty(configKey)) {
                         return this.defaultConfigJson[configKey];
                 }
                 return null;
