@@ -8,6 +8,7 @@
   "sonoffPublish_prefix": null,
   "logfile": "./MobileAlerts.log",
   "logGatewayInfo": true,
+  "logSensorDataToConsole": true,
   "proxyServerPort": 8080,
   "mobileAlertsCloudForward": false,
   "serverPost": null,

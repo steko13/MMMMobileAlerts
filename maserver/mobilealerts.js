@@ -33,6 +33,7 @@ eConf.defaults({
     'sonoffPublish_prefix': null, // publish devices with a specific prefix rather than only their ID in case of publish type sonoff
     'logfile': './MobileAlerts.log',
     'logGatewayInfo': true,   // display info about all found gateways
+    'logSensorDataToConsole': true,  // log received/sent sensor data to console
 
     // The Mobile-Alert Cloud Server always uses port 8080, we do too,
     // so we are not using a privileged one.
@@ -162,10 +163,13 @@ function sendMQTT(sensor) {
     var json = sensor.json
     json.offline = false
     const sensorName = eConf.get('sensors:' + sensor.ID)
-    if (sensorName)
-        console.log(sensorName, mqttHome + sensor.ID + '/json', JSON.stringify(json))
-    else
-        console.log(sensor.ID, mqttHome + sensor.ID + '/json', JSON.stringify(json))
+    const logtoconsole = eConf.get('logSensorDataToConsole')
+    if (logtoconsole) {
+        if (sensorName)
+            console.log(sensorName, mqttHome + sensor.ID + '/json', JSON.stringify(json))
+        else
+            console.log(sensor.ID, mqttHome + sensor.ID + '/json', JSON.stringify(json))        
+    }
 
     if (eConf.get('publish_type') == 'default') {
         mqttClient.publish(mqttHome + sensor.ID + '/json', JSON.stringify(json));
