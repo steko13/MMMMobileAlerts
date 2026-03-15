@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 const fs = require('fs');
-const path = require('path');
 const request = require('dropin-request');
 const easyConf = require('./easyConf');
 const eConf = new easyConf();
@@ -228,10 +227,9 @@ if (locale != null) {
 }
 
 var lastSensorMessages = {};
-const configPath = path.join(process.env.APPDATA, 'maserver', 'lastSensorMessages.json');
 try {
-    if (fs.existsSync(configPath)) {
-        sensorList = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (fs.existsSync('lastSensorMessages.json')) {
+        sensorList = JSON.parse(fs.readFileSync('lastSensorMessages.json', 'utf8'));
         for (sensorID in sensorList) {
             buf = sensorList[sensorID].buffer;
             if (buf) {
@@ -300,14 +298,8 @@ function processSensorData(buffer) {
         var currentTimestamp = Date.now() / 1000;
         if (lastWriteTimestamp + 10 <= currentTimestamp) {
             lastWriteTimestamp = currentTimestamp;
-            // Ordner für die App definieren
-            const appDir = path.join(process.env.APPDATA, 'maserver');
-            // Sicherstellen, dass der Ordner existiert
-            if (!fs.existsSync(appDir)) {
-                fs.mkdirSync(appDir, { recursive: true });
-            }
-            const configPath = path.join(appDir, 'lastSensorMessages.json');
-            fs.writeFile(configPath, JSON.stringify(lastSensorMessages, null, 4), 'utf8', function (error) { });
+            fs.writeFile('lastSensorMessages.json',
+                JSON.stringify(lastSensorMessages, null, 4), 'utf8', function (error) { });
         }
     }
 }
