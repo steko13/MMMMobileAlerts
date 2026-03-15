@@ -174,20 +174,46 @@ module.exports = class UDPGatewayConfig {
                         // Proxy Port
                         sendConfigBuffer.writeInt16BE(proxyServerPort, 0xaf);
 
-                        udpSocket.send(sendConfigBuffer, PORT, GATEWAY_ADDR, function () {
-
-                            // reboot the gateway after a reconfig
-                            var rebootGatewayCommand = Buffer.alloc(REBOOT_SIZE);
-                            rebootGatewayCommand.fill(0, 0x00, REBOOT_SIZE);
-                            rebootGatewayCommand.writeInt16BE(REBOOT, 0x00);
-                            // copy the Mobile Alerts Gateway ID
-                            message.copy(rebootGatewayCommand, 0x02, 0x02, 0x08);
-                            rebootGatewayCommand.writeInt16BE(REBOOT_SIZE, 0x08);
-
-                            udpSocket.send(rebootGatewayCommand, PORT, GATEWAY_ADDR, function () {
-                                console.log('handled gateway ' + GATEWAY_ADDR);
-                                udpSocket.disconnect();
-                            });
+                        udpSocket.send(sendConfigBuffer, PORT, GATEWAY_ADDR, function (err) {
+                            if (err) {
+                                console.error('Fehler beim Senden der Config:', err);
+                                return;
+                            }
+                            console.log('Config erfolgreich an ' + GATEWAY_ADDR + ' übertragen.');
+                        
+                            // 2. Kurze Pause (250ms), damit der Stack sich fängt
+                            setTimeout(function () {
+                                try {
+                                    var rebootGatewayCommand = Buffer.alloc(REBOOT_SIZE);
+                                    rebootGatewayCommand.fill(0, 0x00, REBOOT_SIZE);
+                                    rebootGatewayCommand.writeInt16BE(REBOOT, 0x00);
+                                    message.copy(rebootGatewayCommand, 0x02, 0x02, 0x08);
+                                    rebootGatewayCommand.writeInt16BE(REBOOT_SIZE, 0x08);
+                        
+                                    // 3. Reboot nur senden, wenn der Socket noch lebt
+                                    udpSocket.send(rebootGatewayCommand, PORT, GATEWAY_ADDR, function (err2) {
+                                        if (err2) {
+                                            console.log('Reboot-Befehl konnte nicht bestätigt werden (vmtl. Gateway bereits im Reboot):', err2.message);
+                                        } else {
+                                            console.log('Reboot-Befehl erfolgreich gesendet.');
+                                        }
+                                        
+                                        // 4. Erst jetzt disconnecten
+                                        setTimeout( function() { 
+                                            try {
+                                                udpSocket.disconnect();
+                                                console.log('UDP-Socket für ' + GATEWAY_ADDR + ' geschlossen.');
+                                            } catch(e) {
+                                                // Falls der Socket bereits durch das System geschlossen wurde
+                                                console.warn('Hinweis beim Disconnect: ' + e.message);
+                                            } 
+                                        }, 100);
+                                    });
+                                } catch (e) {
+                                    // Hier fangen wir den ERR_SOCKET_DGRAM_NOT_CONNECTED ab
+                                    console.warn('Socket-Hinweis: ' + e.message + ' (Gateway führt vermutlich bereits Reboot aus)');
+                                }
+                            }, 250);
                         });
                     } else {
                         //udpSocket.close();
