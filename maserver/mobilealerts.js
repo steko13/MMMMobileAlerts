@@ -253,9 +253,19 @@ function processSensorData(buffer) {
     if (sensor) {
         // Is the transmit ID unchanged (= is it the same package as the last one?)
         if (lastSensorMessages[sensor.ID]) {
-            const lastTx = lastSensorMessages[sensor.ID].tx;
-            if (lastTx == sensor.tx) // then we ignore it!
-                return;
+            const lastMsg = lastSensorMessages[sensor.ID];
+            const lastTx = lastMsg.tx;
+            const timeDiff = Date.now() - lastMsg.unixTime_ms;
+            if (lastTx == sensor.tx) {
+                if(sensor.sensorType != 0x10) {     // then we ignore it!
+                    return;
+                }
+                else {
+                    if(timeDiff < 30000) {
+                        return;
+                    }
+                }
+            }               
         }
 
         sensor.isOffline = false;
