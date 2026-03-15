@@ -267,7 +267,7 @@ function processSensorData(buffer) {
         // (no message within a given period)
         for (sensorID in lastSensorMessages) {
             // make sure we modify a copy
-            var sensorTimeoutDate = new Date(lastSensorMessages[sensorID].unixTime);
+            var sensorTimeoutDate = new Date(lastSensorMessages[sensorID].unixTime_ms);
             // add the timeout to the last time the sensor was transmitting
             // sensor timeout + a 7 minutes transmission buffer for the gateway
             sensorTimeoutDate.setMinutes(sensorTimeoutDate.getMinutes()
